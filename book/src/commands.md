@@ -29,7 +29,7 @@ On Unix systems the backslash character may be used to escape certain characters
 
 Expansions are patterns that Helix recognizes and replaces within the command line. Helix recognizes anything starting with a percent token (`%`) as an expansion, for example `%sh{echo hi!}`.
 
-Expansions take the form `%[<kind>]<open><contents><close>`. In `%sh{echo hi!}`, for example, the kind is `sh` - the shell expansion - and the contents are "echo hi!", with `{` and `}` acting as opening and closing delimiters. The following open/close characters are recognized as expansion delimiter pairs: `(`/`)`, `[`/`]`, `{`/`}` and `<`/`>`. Any grapheme cluster can be used as both open and close delimiters instead however: `%{cursor_line}` is equivalent to `%|cursor_line|`, `%"cursor_line"` and even `%🏴‍☠️cursor_line🏴‍☠️`.
+Expansions take the form `%[<kind>]<open><contents><close>`. In `%sh{echo hi!}`, for example, the kind is `sh` - the shell expansion - and the contents are "echo hi!", with `{` and `}` acting as opening and closing delimiters. The following open/close characters are recognized as expansion delimiter pairs: `(`/`)`, `[`/`]`, `{`/`}` and `<`/`>`. Plus the single characters `'`, `"` or `|` may be used instead: `%{cursor_line}` is equivalent to `%<cursor_line>`, `%[cursor_line]` or `%|cursor_line|` for example.
 
 When no `<kind>` is provided, Helix will expand a **variable**. For example `%{cursor_line}` can be used as an argument to provide the currently focused document's primary selection cursor line as an argument. `:echo %{cursor_line}` for instance may print `1` to the statusline.
 

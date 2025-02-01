@@ -27,8 +27,6 @@
 
 use std::{borrow::Cow, collections::HashMap, error::Error, fmt, ops, slice, vec};
 
-use unicode_segmentation::UnicodeSegmentation;
-
 /// Splits a command line into the command and arguments parts.
 ///
 /// The third tuple member describes whether the command part is finished. When this boolean is
@@ -492,18 +490,18 @@ impl<'a> Tokenizer<'a> {
     ///
     /// The position of the tokenizer is asserted to be immediately after the quote grapheme
     /// cluster.
-    fn parse_quoted(&mut self, quote: &str) -> (Cow<'a, str>, bool) {
-        assert!(self.input[..self.pos].ends_with(quote));
+    fn parse_quoted(&mut self, quote: u8) -> (Cow<'a, str>, bool) {
+        assert_eq!(self.byte(), Some(quote));
+        self.pos += 1;
 
         let mut escaped = String::new();
-
-        while let Some(offset) = self.input[self.pos..].find(quote) {
+        while let Some(offset) = self.input[self.pos..].find(quote as char) {
             let idx = self.pos + offset;
-
-            if self.input[idx + quote.len()..].starts_with(quote) {
+            if self.input.as_bytes().get(idx + 1) == Some(&quote) {
                 // Treat two quotes in a row as an escape.
-                escaped.push_str(&self.input[self.pos..idx + quote.len()]);
-                self.pos += quote.len();
+                escaped.push_str(&self.input[self.pos..idx + 1]);
+                // Advance past the escaped quote.
+                self.pos = idx + 2;
             } else {
                 // Otherwise this quote string is finished.
                 let quoted = if escaped.is_empty() {
@@ -513,12 +511,9 @@ impl<'a> Tokenizer<'a> {
                     Cow::Owned(escaped)
                 };
                 // Advance past the closing quote.
-                self.pos = idx + quote.len();
+                self.pos = idx + 1;
                 return (quoted, true);
             }
-
-            // Advance past the quote.
-            self.pos += offset + quote.len();
         }
 
         let quoted = if escaped.is_empty() {
@@ -541,17 +536,24 @@ impl<'a> Tokenizer<'a> {
 
         self.pos += 1;
         let kind_start = self.pos;
-        while self.byte().filter(|b| b.is_ascii_lowercase()).is_some() {
-            self.pos += 1;
-        }
+        self.pos += self.input[self.pos..]
+            .bytes()
+            .take_while(|b| b.is_ascii_lowercase())
+            .count();
         let kind = &self.input[kind_start..self.pos];
 
-        let next_grapheme = self.input[self.pos..]
-            .graphemes(true)
-            .next()
-            .inspect(|grapheme| self.pos += grapheme.len());
-        let opening_delimiter = match next_grapheme {
-            Some(" " | "\t") | None => {
+        let (open, close) = match self.byte() {
+            // we support a coulpe of harcdoded chars only to make sure we can
+            // provide more usefule errors and avoid weird behaviour in case of
+            // typos. These should cover practical cases
+            Some(b'(') => (b'(', b')'),
+            Some(b'[') => (b'[', b']'),
+            Some(b'{') => (b'{', b'}'),
+            Some(b'<') => (b'<', b'>'),
+            Some(b'\'') => (b'\'', b'\''),
+            Some(b'\"') => (b'\"', b'\"'),
+            Some(b'|') => (b'|', b'|'),
+            Some(_) | None => {
                 return Some(if self.validate {
                     Err(ParseArgsError::MissingExpansionDelimiter { expansion: kind })
                 } else {
@@ -563,12 +565,10 @@ impl<'a> Tokenizer<'a> {
                     })
                 });
             }
-            Some(g) => g,
         };
         // The content start for expansions is the start of the content - after the opening
         // delimiter grapheme.
-        let content_start = self.pos;
-
+        let content_start = self.pos + 1;
         let kind = match ExpansionKind::from_kind(kind) {
             Some(kind) => TokenKind::Expansion(kind),
             None if self.validate => {
@@ -577,16 +577,10 @@ impl<'a> Tokenizer<'a> {
             None => TokenKind::Expand,
         };
 
-        const PAIRS: [(u8, u8); 4] = [(b'(', b')'), (b'[', b']'), (b'{', b'}'), (b'<', b'>')];
-
-        let (content, is_terminated) = if let Some((open, close)) = PAIRS
-            .iter()
-            .find(|(open, _)| opening_delimiter.as_bytes() == [*open])
-            .copied()
-        {
-            self.parse_quoted_balanced(open, close)
+        let (content, is_terminated) = if open == close {
+            self.parse_quoted(open)
         } else {
-            self.parse_quoted(opening_delimiter)
+            self.parse_quoted_balanced(open, close)
         };
 
         let token = Token {
@@ -611,7 +605,8 @@ impl<'a> Tokenizer<'a> {
     /// This function parses with nesting support. `%sh{echo {hello}}` for example should consume
     /// the entire input and not quit after the first '}' character is found.
     fn parse_quoted_balanced(&mut self, open: u8, close: u8) -> (Cow<'a, str>, bool) {
-        assert_eq!(self.prev_byte(), Some(open));
+        assert_eq!(self.byte(), Some(open));
+        self.pos += 1;
         let start = self.pos;
         let mut level = 1;
 
@@ -656,12 +651,8 @@ impl<'a> Iterator for Tokenizer<'a> {
         let byte = self.byte()?;
         match byte {
             b'"' | b'\'' | b'`' => {
-                self.pos += 1;
-                let content_start = self.pos;
-                let quote_bytes = &[byte];
-                let quote_grapheme =
-                    std::str::from_utf8(quote_bytes).expect("an ASCII byte is valid UTF-8");
-                let (content, is_terminated) = self.parse_quoted(quote_grapheme);
+                let content_start = self.pos + 1;
+                let (content, is_terminated) = self.parse_quoted(byte);
                 let token = Token {
                     kind: match byte {
                         b'"' => TokenKind::Expand,
@@ -851,9 +842,8 @@ impl<'a> Args<'a> {
             } else {
                 let shorthand = arg.strip_prefix('-').unwrap();
                 self.signature.flags.iter().find(|flag| {
-                    flag.alias.is_some_and(|ch| {
-                        shorthand.starts_with(ch) && ch.len_utf8() == shorthand.len()
-                    })
+                    flag.alias
+                        .is_some_and(|ch| shorthand == ch.encode_utf8(&mut [0; 4]))
                 })
             };
 
@@ -1096,10 +1086,9 @@ mod test {
         assert_tokens(r#"echo %[hello world]"#, &["echo", "hello world"]);
         assert_tokens(r#"echo %(hello world)"#, &["echo", "hello world"]);
         assert_tokens(r#"echo %<hello world>"#, &["echo", "hello world"]);
-        // Any character can be used as a delimiter.
         assert_tokens(r#"echo %|hello world|"#, &["echo", "hello world"]);
-        // Yes, even this crazy stuff. Multi-codepoint grapheme clusters are supported too.
-        assert_tokens(r#"echo %🏴‍☠️hello world🏴‍☠️"#, &["echo", "hello world"]);
+        assert_tokens(r#"echo %'hello world'"#, &["echo", "hello world"]);
+        assert_tokens(r#"echo %"hello world""#, &["echo", "hello world"]);
         // When invoking a command, double percents can be used within a string as an escape for
         // the percent. This is done in the expansion code though, not in the parser here.
         assert_tokens(r#"echo "%%hello world""#, &["echo", "%%hello world"]);
