@@ -206,42 +206,41 @@ impl fmt::Display for ParseArgsError<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::WrongPositionalCount { min, max, actual } => {
-                f.write_str("expected ")?;
+                write!(f, "expected ")?;
                 let maybe_plural = |n| if n == 1 { "" } else { "s" };
                 match (min, max) {
-                    (0, Some(0)) => f.write_str("no arguments")?,
+                    (0, Some(0)) => write!(f, "no arguments")?,
                     (min, Some(max)) if min == max => {
-                        f.write_fmt(format_args!("exactly {min} argument{}", maybe_plural(*min)))?
+                        write!(f, "exactly {min} argument{}", maybe_plural(*min))?
                     }
-                    (min, _) if actual < min => f.write_fmt(format_args!(
-                        "at least {min} argument{}",
-                        maybe_plural(*min)
-                    ))?,
+                    (min, _) if actual < min => {
+                        write!(f, "at least {min} argument{}", maybe_plural(*min))?
+                    }
                     (_, Some(max)) if actual > max => {
-                        f.write_fmt(format_args!("at most {max} argument{}", maybe_plural(*max)))?
+                        write!(f, "at most {max} argument{}", maybe_plural(*max))?
                     }
                     // `actual` must be either less than `min` or greater than `max` for this type
                     // to be constructed.
                     _ => unreachable!(),
                 }
 
-                f.write_fmt(format_args!(", got {actual}"))
+                write!(f, ", got {actual}")
             }
             Self::UnterminatedToken { token } => {
-                f.write_fmt(format_args!("unterminated token {}", token.content))
+                write!(f, "unterminated token {}", token.content)
             }
             Self::DuplicatedFlag { flag } => {
-                f.write_fmt(format_args!("flag '--{flag}' specified more than once"))
+                write!(f, "flag '--{flag}' specified more than once")
             }
-            Self::UnknownFlag { text } => f.write_fmt(format_args!("unknown flag '{text}'")),
+            Self::UnknownFlag { text } => write!(f, "unknown flag '{text}'"),
             Self::FlagMissingArgument { flag } => {
-                f.write_fmt(format_args!("flag '--{flag}' missing an argument"))
+                write!(f, "flag '--{flag}' missing an argument")
             }
-            Self::MissingExpansionDelimiter { expansion } => f.write_fmt(format_args!(
-                "missing a string delimiter after '%{expansion}'"
-            )),
+            Self::MissingExpansionDelimiter { expansion } => {
+                write!(f, "missing a string delimiter after '%{expansion}'")
+            }
             Self::UnknownExpansion { kind } => {
-                f.write_fmt(format_args!("unknown expansion '{kind}'"))
+                write!(f, "unknown expansion '{kind}'")
             }
         }
     }
